@@ -33,8 +33,6 @@ st.markdown("""
     .advantage-item .icon { font-size: 2rem; margin-bottom: 0.5rem; }
     .advantage-item h4 { color: #334155; margin: 0 0 0.25rem 0; font-size: 0.95rem; }
     .advantage-item p { color: #64748b; margin: 0; font-size: 0.85rem; }
-    div[data-testid="stDataFrame"] > div { width: 100% !important; }
-    div[data-testid="stDataFrame"] table { width: 100% !important; table-layout: fixed !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -55,12 +53,6 @@ t = {
     "results": " AI Detection Results" if not is_fr else " Resultats IA",
     "download_excel": " Download Full Report" if not is_fr else " Telecharger Rapport",
     "data_preview": " Sample Data Preview" if not is_fr else " Apercu des Donnees",
-    "high_anomaly": "High Anomaly" if not is_fr else "Anomalie Haute",
-    "medium_anomaly": "Medium Anomaly" if not is_fr else "Anomalie Moyenne",
-    "normal": "Normal",
-    "explanation": "Explanation" if not is_fr else "Explication",
-    "level": "Level" if not is_fr else "Niveau",
-    "ai_score": "AI Score" if not is_fr else "Score IA",
     "welcome_title": " Select Sample Data to Start" if not is_fr else " Selectionnez des Donnees",
     "welcome_text": "Choose a sample dataset in the sidebar to see AI in action!" if not is_fr else "Choisissez un jeu de donnees!",
     "get_full": "Get Full Desktop Version" if not is_fr else "Version Complete",
@@ -79,11 +71,12 @@ t = {
     "adv3_title": "Detect Anomalies" if not is_fr else "Detecter les Anomalies",
     "adv3_desc": "Identify suspicious patterns early" if not is_fr else "Identifiez les patterns suspects",
     "example_desc": "Sample data with embedded anomalies. AI will identify unusual patterns." if not is_fr else "Donnees avec anomalies. L IA identifiera les patterns inhabituels.",
-    "all_rows_note": "Showing ALL rows sorted by AI score. Anomalies highlighted, normal shown for context." if not is_fr else "TOUTES les lignes triees par score IA.",
 }
 
-THRESHOLD_HIGH = 2.0
-THRESHOLD_MEDIUM = 1.2
+THRESHOLD_HIGH_ZSCORE = 2.0
+THRESHOLD_MEDIUM_ZSCORE = 1.2
+THRESHOLD_HIGH_AI = -0.15
+THRESHOLD_MEDIUM_AI = -0.05
 
 def gen_invoices():
     np.random.seed(42)
@@ -175,6 +168,7 @@ if df is not None:
     st.dataframe(df.head(8), use_container_width=True, height=220)
     
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    id_col = [c for c in df.columns if 'ID' in c.upper() or 'SKU' in c.upper()][0]
     
     if numeric_cols and st.session_state.get('auto_run', False):
         st.session_state['auto_run'] = False
@@ -184,115 +178,117 @@ if df is not None:
         with st.spinner(" AI Analyzing..."):
             results = df.copy()
             
-            # Round all numeric columns to 2 decimals
-            for col in numeric_cols:
-                results[col] = results[col].round(2)
+            # Z-SCORE CALCULATION (like real app)
+            z_scores_raw = {}
+            z_scores_abs = {}
             
-            # Calculate z-scores
-            z_scores = {}
             for col in numeric_cols:
                 mean = df[col].mean()
                 std = df[col].std()
                 if std > 0:
-                    z_scores[col] = (df[col] - mean) / std
+                    z = (df[col] - mean) / std
                 else:
-                    z_scores[col] = pd.Series([0.0] * len(df))
+                    z = pd.Series([0.0] * len(df))
+                z_scores_raw[col] = z
+                z_scores_abs[col] = np.abs(z)
             
-            # Average deviation (mean of absolute z-scores)
-            z_matrix = np.column_stack([np.abs(z_scores[col].values) for col in numeric_cols])
+            # Average_Deviation (z-score composite)
+            z_matrix = np.column_stack([z_scores_abs[col].values for col in numeric_cols])
             avg_deviation = np.mean(z_matrix, axis=1)
+            results['Average_Deviation'] = np.round(avg_deviation, 2)
             
-            # AI Score: scale 0-10 (capped), 2 decimals
-            # Based on average deviation: 0 = normal, 10 = extreme
-            results['AI_Score'] = np.clip(avg_deviation * 2.5, 0, 10).round(2)
+            # Isolation_Score (NEGATIVE = more anomalous)
+            # Simulating IsolationForest: normal ~0.05 to 0.15, anomaly ~ -0.10 to -0.40
+            isolation_score = 0.10 - (avg_deviation * 0.12)
+            results['Isolation_Score'] = np.round(isolation_score, 2)
             
-            # Generate short explanations
-            def generate_explanation(idx, is_fr):
-                explanations = []
-                for col in numeric_cols:
-                    z = z_scores[col].iloc[idx]
-                    if abs(z) >= 1.5:
-                        direction = "above" if z > 0 else "below"
-                        if is_fr:
-                            direction = "+" if z > 0 else "-"
-                        col_short = col.replace('_', ' ')[:12]
-                        explanations.append(f"{col_short} {abs(z):.1f}x {direction}")
-                if len(explanations) == 0:
-                    return "Normal" if not is_fr else "Normal"
-                return " | ".join(explanations[:2])
-            
-            results['Explanation'] = [generate_explanation(i, is_fr) for i in range(len(df))]
-            
-            # Classify levels
-            def classify_level(avg_dev):
-                if avg_dev >= THRESHOLD_HIGH:
-                    return t['high_anomaly']
-                elif avg_dev >= THRESHOLD_MEDIUM:
-                    return t['medium_anomaly']
+            # ANOMALY LEVEL (hybrid logic from real app)
+            def classify_anomaly(avg_dev, iso_score):
+                extreme_stat = THRESHOLD_HIGH_ZSCORE * 1.5
+                extreme_ai = THRESHOLD_HIGH_AI * 1.5
+                min_dev = 0.3
+                
+                if avg_dev < min_dev:
+                    return "Low Anomaly"
+                
+                both_agree = (avg_dev >= THRESHOLD_HIGH_ZSCORE and iso_score <= THRESHOLD_HIGH_AI)
+                stat_extreme = avg_dev >= extreme_stat
+                ai_extreme = (iso_score <= extreme_ai and avg_dev >= THRESHOLD_MEDIUM_ZSCORE)
+                
+                if both_agree or stat_extreme or ai_extreme:
+                    return "High Anomaly"
+                elif (avg_dev >= THRESHOLD_MEDIUM_ZSCORE or 
+                      (iso_score <= THRESHOLD_MEDIUM_AI and avg_dev >= min_dev)):
+                    return "Medium Anomaly"
                 else:
-                    return t['normal']
+                    return "Low Anomaly"
             
-            results['Level'] = [classify_level(avg_deviation[i]) for i in range(len(df))]
+            results['Anomaly_Level'] = [classify_anomaly(avg_deviation[i], isolation_score[i]) for i in range(len(df))]
             
-            # Sort by AI Score descending
-            results_sorted = results.sort_values('AI_Score', ascending=False).reset_index(drop=True)
+            # EXPLANATION
+            def generate_explanation(idx):
+                level = results['Anomaly_Level'].iloc[idx]
+                if level == "Low Anomaly":
+                    return "Normal range"
+                contributors = []
+                for col in numeric_cols:
+                    z = z_scores_raw[col].iloc[idx]
+                    if abs(z) >= 0.5:
+                        direction = "above avg" if z > 0 else "below avg"
+                        col_clean = col.replace('_', ' ')
+                        contributors.append((abs(z), f"{col_clean} {abs(z):.1f}x {direction}"))
+                contributors.sort(reverse=True)
+                top = [c[1] for c in contributors[:2]]
+                return ", ".join(top) if top else "Pattern detected"
             
-            # Count anomalies
-            n_high = len(results_sorted[results_sorted['Level'] == t['high_anomaly']])
-            n_med = len(results_sorted[results_sorted['Level'] == t['medium_anomaly']])
-            n_normal = len(results_sorted[results_sorted['Level'] == t['normal']])
-            n_total = n_high + n_med
+            results['Anomaly_Explanation'] = [generate_explanation(i) for i in range(len(df))]
+            
+            # Sort by Isolation_Score ascending (most negative first = most anomalous)
+            results_sorted = results.sort_values('Isolation_Score', ascending=True).reset_index(drop=True)
+            
+            # Counts
+            n_high = len(results_sorted[results_sorted['Anomaly_Level'] == "High Anomaly"])
+            n_med = len(results_sorted[results_sorted['Anomaly_Level'] == "Medium Anomaly"])
+            n_low = len(results_sorted[results_sorted['Anomaly_Level'] == "Low Anomaly"])
             
             c1, c2, c3, c4 = st.columns(4)
             c1.markdown(f'<div class="stat-card stat-critical"><div style="font-size:2rem;font-weight:bold;color:#dc2626;">{n_high}</div><div>High</div></div>', unsafe_allow_html=True)
             c2.markdown(f'<div class="stat-card stat-high"><div style="font-size:2rem;font-weight:bold;color:#f59e0b;">{n_med}</div><div>Medium</div></div>', unsafe_allow_html=True)
-            c3.markdown(f'<div class="stat-card stat-low"><div style="font-size:2rem;font-weight:bold;color:#22c55e;">{n_normal}</div><div>Normal</div></div>', unsafe_allow_html=True)
-            c4.markdown(f'<div class="stat-card" style="border-color:#667eea;"><div style="font-size:2rem;font-weight:bold;color:#667eea;">{n_total}</div><div>Flagged</div></div>', unsafe_allow_html=True)
+            c3.markdown(f'<div class="stat-card stat-low"><div style="font-size:2rem;font-weight:bold;color:#22c55e;">{n_low}</div><div>Normal</div></div>', unsafe_allow_html=True)
+            c4.markdown(f'<div class="stat-card" style="border-color:#667eea;"><div style="font-size:2rem;font-weight:bold;color:#667eea;">{n_high+n_med}</div><div>Flagged</div></div>', unsafe_allow_html=True)
             
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.success(f" **{len(results_sorted)}** rows analyzed - **{n_total}** anomalies - **{n_normal}** normal")
+            st.success(f" **{len(results_sorted)}** rows - **{n_high+n_med}** anomalies - **{n_low}** normal")
             
-            # Get first ID column for display
-            id_col = [c for c in results_sorted.columns if 'ID' in c.upper() or 'SKU' in c.upper()]
-            id_col = id_col[0] if id_col else results_sorted.columns[0]
-            
-            # Create compact display table (ID + key numeric + AI Score + Level + Explanation)
-            # Select only essential columns to fit on screen
-            key_numeric = numeric_cols[:2]  # First 2 numeric columns only
-            display_cols = [id_col] + key_numeric + ['AI_Score', 'Level', 'Explanation']
-            display_df = results_sorted[display_cols].copy()
-            
-            # Rename for display
-            display_df = display_df.rename(columns={
-                'AI_Score': t['ai_score'],
-                'Level': t['level'],
-                'Explanation': t['explanation']
-            })
+            # Display columns: ID, Isolation_Score, Average_Deviation, Anomaly_Level, Explanation
+            display_df = results_sorted[[id_col, 'Isolation_Score', 'Average_Deviation', 'Anomaly_Level', 'Anomaly_Explanation']].copy()
             
             def color_level(val):
-                if val == t['high_anomaly']: return 'background-color:#dc2626;color:white;font-weight:bold;'
-                if val == t['medium_anomaly']: return 'background-color:#f59e0b;color:white;font-weight:bold;'
+                if val == "High Anomaly": return 'background-color:#dc2626;color:white;font-weight:bold;'
+                if val == "Medium Anomaly": return 'background-color:#f59e0b;color:white;font-weight:bold;'
                 return 'background-color:#22c55e;color:white;'
             
             def color_row(row):
-                lv = row[t['level']]
-                if lv == t['high_anomaly']: return ['background-color:#fee2e2;'] * len(row)
-                if lv == t['medium_anomaly']: return ['background-color:#fffbeb;'] * len(row)
+                lv = row['Anomaly_Level']
+                if lv == "High Anomaly": return ['background-color:#fee2e2;'] * len(row)
+                if lv == "Medium Anomaly": return ['background-color:#fffbeb;'] * len(row)
                 return [''] * len(row)
             
-            styled = display_df.style.apply(color_row, axis=1).map(color_level, subset=[t['level']]).format(precision=2)
-            st.dataframe(styled, use_container_width=True, height=500, hide_index=True)
+            # Column config to stretch columns across full width
+            col_config = {
+                id_col: st.column_config.TextColumn(id_col, width="small"),
+                'Isolation_Score': st.column_config.NumberColumn("Isolation_Score", format="%.2f", width="small"),
+                'Average_Deviation': st.column_config.NumberColumn("Average_Deviation", format="%.2f", width="small"),
+                'Anomaly_Level': st.column_config.TextColumn("Anomaly_Level", width="medium"),
+                'Anomaly_Explanation': st.column_config.TextColumn("Anomaly_Explanation", width="large"),
+            }
             
-            # Full report for download (all columns)
-            full_df = results_sorted.rename(columns={
-                'AI_Score': t['ai_score'],
-                'Level': t['level'],
-                'Explanation': t['explanation']
-            })
+            styled = display_df.style.apply(color_row, axis=1).map(color_level, subset=['Anomaly_Level'])
+            st.dataframe(styled, use_container_width=True, height=450, hide_index=True, column_config=col_config)
             
+            # Excel export
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                full_df.to_excel(writer, index=False, sheet_name='Results')
+                results_sorted.to_excel(writer, index=False, sheet_name='Results')
                 ws = writer.sheets['Results']
                 fill_h = PatternFill(start_color='667EEA', end_color='667EEA', fill_type='solid')
                 fill_c = PatternFill(start_color='DC2626', end_color='DC2626', fill_type='solid')
@@ -303,22 +299,20 @@ if df is not None:
                 font_w = Font(color='FFFFFF', bold=True)
                 bdr = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
                 for cell in ws[1]: cell.fill, cell.font, cell.border = fill_h, font_w, bdr
-                lv_idx = list(full_df.columns).index(t['level']) + 1
-                for r in range(2, len(full_df) + 2):
+                lv_idx = list(results_sorted.columns).index('Anomaly_Level') + 1
+                for r in range(2, len(results_sorted) + 2):
                     lv = ws.cell(row=r, column=lv_idx).value
                     rf, lf = None, None
-                    if lv == t['high_anomaly']: rf, lf = fill_cr, fill_c
-                    elif lv == t['medium_anomaly']: rf, lf = fill_mr, fill_m
-                    elif lv == t['normal']: lf = fill_l
-                    for c in range(1, len(full_df.columns) + 1):
+                    if lv == "High Anomaly": rf, lf = fill_cr, fill_c
+                    elif lv == "Medium Anomaly": rf, lf = fill_mr, fill_m
+                    elif lv == "Low Anomaly": lf = fill_l
+                    for c in range(1, len(results_sorted.columns) + 1):
                         cell = ws.cell(row=r, column=c)
                         cell.border = bdr
                         if rf: cell.fill = rf
                         if c == lv_idx and lf: cell.fill, cell.font = lf, font_w
-                for i, col in enumerate(full_df.columns, 1):
-                    ws.column_dimensions[ws.cell(1, i).column_letter].width = min(30, max(len(str(col)), 10) + 2)
-                ws.auto_filter.ref = f"A1:{ws.cell(1, len(full_df.columns)).column_letter}{len(full_df) + 1}"
-                ws.freeze_panes = 'A2'
+                for i, col in enumerate(results_sorted.columns, 1):
+                    ws.column_dimensions[ws.cell(1, i).column_letter].width = min(25, max(len(str(col)), 10) + 2)
             output.seek(0)
             st.download_button(t['download_excel'], output, f"aynalyxai_{data_name.lower()}_report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
         
