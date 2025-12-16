@@ -54,15 +54,14 @@ t = {
     "results": " AI Detection Results" if not is_fr else " Resultats IA",
     "download_excel": " Download Full Report" if not is_fr else " Telecharger Rapport",
     "data_preview": " Sample Data Preview" if not is_fr else " Apercu des Donnees",
-    "critical": "CRITICAL" if not is_fr else "CRITIQUE",
-    "high": "HIGH" if not is_fr else "ELEVE",
-    "medium": "MEDIUM" if not is_fr else "MOYEN",
-    "low": "LOW" if not is_fr else "FAIBLE",
+    "critical": "High Anomaly" if not is_fr else "Anomalie Haute",
+    "high": "Medium Anomaly" if not is_fr else "Anomalie Moyenne",
+    "medium": "Low Anomaly" if not is_fr else "Anomalie Basse",
+    "low": "Normal" if not is_fr else "Normal",
     "normal": "Normal",
-    "explanation": "AI Explanation" if not is_fr else "Explication IA",
-    "level": "Risk Level" if not is_fr else "Niveau Risque",
-    "ai_score": "AI Score" if not is_fr else "Score IA",
-    "deviation_score": "Deviation" if not is_fr else "Deviation",
+    "explanation": "Explanation" if not is_fr else "Explication",
+    "level": "Anomaly Level" if not is_fr else "Niveau Anomalie",
+    "avg_dev": "Avg Deviation" if not is_fr else "Deviation Moy",
     "welcome_title": " Select Sample Data to Start" if not is_fr else " Selectionnez des Donnees",
     "welcome_text": "Choose a sample dataset in the sidebar to see AI in action!" if not is_fr else "Choisissez un jeu de donnees!",
     "get_full": "Get Full Desktop Version" if not is_fr else "Version Complete",
@@ -81,27 +80,12 @@ t = {
     "adv3_title": "Detect Anomalies" if not is_fr else "Detecter les Anomalies",
     "adv3_desc": "Identify suspicious patterns early" if not is_fr else "Identifiez les patterns suspects",
     "example_desc": "Sample data with embedded anomalies. AI will identify unusual patterns." if not is_fr else "Donnees avec anomalies. L IA identifiera les patterns inhabituels.",
-    "all_rows_note": "Showing ALL rows sorted by risk. Anomalies highlighted, normal shown for context." if not is_fr else "TOUTES les lignes triees par risque.",
+    "all_rows_note": "Showing ALL rows sorted by deviation. Anomalies highlighted, normal shown for context." if not is_fr else "TOUTES les lignes triees par deviation.",
 }
 
-def get_explanation(value, mean, std, col_name, is_fr):
-    """Generate explanation for a single column anomaly"""
-    if std == 0:
-        return ""
-    z = (value - mean) / std
-    pct = ((value - mean) / mean * 100) if mean != 0 else 0
-    abs_z = abs(z)
-    
-    if abs_z > 1.5:
-        direction = "above" if z > 0 else "below"
-        direction_fr = "au-dessus" if z > 0 else "en-dessous"
-        if abs_z > 3:
-            return f"{col_name}: {abs(pct):.0f}% {direction if not is_fr else direction_fr} - UNUSUAL"
-        elif abs_z > 2:
-            return f"{col_name}: {abs(pct):.0f}% {direction if not is_fr else direction_fr}"
-        else:
-            return f"{col_name}: {'+' if pct > 0 else ''}{pct:.0f}%"
-    return ""
+# Thresholds matching the real app (modeling.py)
+THRESHOLD_HIGH = 2.0      # High Anomaly threshold (z-score)
+THRESHOLD_MEDIUM = 1.2    # Medium Anomaly threshold (z-score)
 
 def gen_invoices():
     np.random.seed(42)
@@ -201,99 +185,89 @@ if df is not None:
         
         with st.spinner(" AI Analyzing..."):
             results = df.copy()
-            results['Deviation_Score'] = 0.0
-            results['AI_Score'] = 0.0
-            results['Anomaly_Level'] = t['normal']
-            results['Anomaly_Explanation'] = ""
             
-            # Calculate stats for each numeric column
-            col_stats = {}
+            # Calculate z-scores for each numeric column (same as real app)
+            z_scores = {}
             for col in numeric_cols:
-                col_stats[col] = {'mean': df[col].mean(), 'std': df[col].std()}
-            
-            for idx in range(len(df)):
-                explanations = []
-                z_scores = []
-                anomaly_count = 0
-                
-                for col in numeric_cols:
-                    mean = col_stats[col]['mean']
-                    std = col_stats[col]['std']
-                    
-                    if std > 0:
-                        value = df[col].iloc[idx]
-                        z = abs((value - mean) / std)
-                        z_scores.append(z)
-                        
-                        # Count anomalies per column (threshold 1.5)
-                        if z > 1.5:
-                            anomaly_count += 1
-                            exp = get_explanation(value, mean, std, col, is_fr)
-                            if exp:
-                                explanations.append(exp)
-                
-                # Combined score: max z-score + bonus for multiple anomalies
-                max_z = max(z_scores) if z_scores else 0
-                avg_z = np.mean(z_scores) if z_scores else 0
-                
-                # Multi-factor bonus: having multiple anomalous columns increases severity
-                multi_factor_bonus = min(anomaly_count * 0.5, 2.0) if anomaly_count > 1 else 0
-                combined_score = max_z + multi_factor_bonus
-                
-                results.loc[idx, 'Deviation_Score'] = round(combined_score, 2)
-                
-                # AI Score calculation (0-100)
-                if combined_score > 3:
-                    ai_score = min(100, 70 + combined_score * 5)
-                elif combined_score > 2:
-                    ai_score = 50 + combined_score * 10
+                mean = df[col].mean()
+                std = df[col].std()
+                if std > 0:
+                    z_scores[col] = (df[col] - mean) / std
                 else:
-                    ai_score = combined_score * 15
-                results.loc[idx, 'AI_Score'] = round(ai_score, 1)
-                
-                results.loc[idx, 'Anomaly_Explanation'] = " | ".join(explanations)
+                    z_scores[col] = pd.Series([0] * len(df))
+                results[f'Deviation_{col}'] = z_scores[col].round(2)
             
-            # Assign risk levels based on combined score
-            results.loc[results['Deviation_Score'] > 4.0, 'Anomaly_Level'] = t['critical']
-            results.loc[(results['Deviation_Score'] > 3.0) & (results['Deviation_Score'] <= 4.0), 'Anomaly_Level'] = t['high']
-            results.loc[(results['Deviation_Score'] > 2.0) & (results['Deviation_Score'] <= 3.0), 'Anomaly_Level'] = t['medium']
-            results.loc[(results['Deviation_Score'] > 1.5) & (results['Deviation_Score'] <= 2.0), 'Anomaly_Level'] = t['low']
+            # Calculate Average_Deviation (MEAN of absolute z-scores, like real app)
+            z_matrix = np.column_stack([np.abs(z_scores[col].values) for col in numeric_cols])
+            results['Average_Deviation'] = np.mean(z_matrix, axis=1).round(2)
             
-            results_sorted = results.sort_values('Deviation_Score', ascending=False).reset_index(drop=True)
-            anomalies = results_sorted[results_sorted['Anomaly_Level'] != t['normal']]
-            n_crit = len(anomalies[anomalies['Anomaly_Level'] == t['critical']])
-            n_high = len(anomalies[anomalies['Anomaly_Level'] == t['high']])
-            n_med = len(anomalies[anomalies['Anomaly_Level'] == t['medium']])
-            n_low = len(anomalies[anomalies['Anomaly_Level'] == t['low']])
-            n_total, n_normal = len(anomalies), len(results_sorted) - len(anomalies)
+            # Generate explanations (like real app)
+            def generate_explanation(row, is_fr):
+                explanations = []
+                for col in numeric_cols:
+                    z = row[f'Deviation_{col}']
+                    if abs(z) >= 1.5:
+                        direction = "above avg" if z > 0 else "below avg"
+                        if is_fr:
+                            direction = "au-dessus moy" if z > 0 else "en-dessous moy"
+                        col_clean = col.replace('_', ' ')
+                        explanations.append(f"{col_clean} = {abs(z):.1f}x {direction}")
+                if len(explanations) == 0:
+                    return "Normal range" if not is_fr else "Plage normale"
+                return ", ".join(explanations[:3])  # Top 3 contributors
             
-            c1, c2, c3, c4, c5 = st.columns(5)
-            c1.markdown(f'<div class="stat-card stat-critical"><div style="font-size:2rem;font-weight:bold;color:#dc2626;">{n_crit}</div><div> {t["critical"]}</div></div>', unsafe_allow_html=True)
-            c2.markdown(f'<div class="stat-card stat-high"><div style="font-size:2rem;font-weight:bold;color:#ef4444;">{n_high}</div><div> {t["high"]}</div></div>', unsafe_allow_html=True)
-            c3.markdown(f'<div class="stat-card stat-medium"><div style="font-size:2rem;font-weight:bold;color:#f59e0b;">{n_med}</div><div> {t["medium"]}</div></div>', unsafe_allow_html=True)
-            c4.markdown(f'<div class="stat-card stat-low"><div style="font-size:2rem;font-weight:bold;color:#22c55e;">{n_low}</div><div> {t["low"]}</div></div>', unsafe_allow_html=True)
-            c5.markdown(f'<div class="stat-card" style="border-color:#667eea;"><div style="font-size:2rem;font-weight:bold;color:#667eea;">{n_total}</div><div> Total</div></div>', unsafe_allow_html=True)
+            results['Anomaly_Explanation'] = results.apply(lambda r: generate_explanation(r, is_fr), axis=1)
+            
+            # Classify anomaly levels (SAME thresholds as real app)
+            def classify_level(avg_dev):
+                if avg_dev >= THRESHOLD_HIGH:
+                    return t['critical']  # High Anomaly
+                elif avg_dev >= THRESHOLD_MEDIUM:
+                    return t['high']  # Medium Anomaly
+                else:
+                    return t['low']  # Normal
+            
+            results['Anomaly_Level'] = results['Average_Deviation'].apply(classify_level)
+            
+            # Sort by deviation (highest first)
+            results_sorted = results.sort_values('Average_Deviation', ascending=False).reset_index(drop=True)
+            
+            # Count anomalies
+            anomalies = results_sorted[results_sorted['Anomaly_Level'] != t['low']]
+            n_high = len(anomalies[anomalies['Anomaly_Level'] == t['critical']])
+            n_med = len(anomalies[anomalies['Anomaly_Level'] == t['high']])
+            n_normal = len(results_sorted) - len(anomalies)
+            n_total = len(anomalies)
+            
+            c1, c2, c3, c4 = st.columns(4)
+            c1.markdown(f'<div class="stat-card stat-critical"><div style="font-size:2rem;font-weight:bold;color:#dc2626;">{n_high}</div><div>High Anomaly</div></div>', unsafe_allow_html=True)
+            c2.markdown(f'<div class="stat-card stat-high"><div style="font-size:2rem;font-weight:bold;color:#f59e0b;">{n_med}</div><div>Medium Anomaly</div></div>', unsafe_allow_html=True)
+            c3.markdown(f'<div class="stat-card stat-low"><div style="font-size:2rem;font-weight:bold;color:#22c55e;">{n_normal}</div><div>Normal</div></div>', unsafe_allow_html=True)
+            c4.markdown(f'<div class="stat-card" style="border-color:#667eea;"><div style="font-size:2rem;font-weight:bold;color:#667eea;">{n_total}</div><div>Total Flagged</div></div>', unsafe_allow_html=True)
             
             st.markdown("<br>", unsafe_allow_html=True)
-            st.success(f" **{len(results_sorted)}** rows analyzed - **{n_total}** anomalies - **{n_normal}** normal")
+            st.success(f" **{len(results_sorted)}** rows analyzed - **{n_total}** anomalies detected - **{n_normal}** normal")
             st.info(f"ℹ {t['all_rows_note']}")
             
-            display_df = results_sorted.copy()
-            display_df = display_df.rename(columns={'Anomaly_Level': t['level'], 'Deviation_Score': t['deviation_score'], 'AI_Score': t['ai_score'], 'Anomaly_Explanation': t['explanation']})
+            # Prepare display dataframe (hide individual deviation columns for cleaner view)
+            display_cols = [c for c in results_sorted.columns if not c.startswith('Deviation_')]
+            display_df = results_sorted[display_cols].copy()
+            display_df = display_df.rename(columns={
+                'Anomaly_Level': t['level'], 
+                'Average_Deviation': t['avg_dev'], 
+                'Anomaly_Explanation': t['explanation']
+            })
             
             def color_level(val):
                 if val == t['critical']: return 'background-color:#dc2626;color:white;font-weight:bold;'
-                if val == t['high']: return 'background-color:#ef4444;color:white;font-weight:bold;'
-                if val == t['medium']: return 'background-color:#f59e0b;color:white;font-weight:bold;'
+                if val == t['high']: return 'background-color:#f59e0b;color:white;font-weight:bold;'
                 if val == t['low']: return 'background-color:#22c55e;color:white;font-weight:bold;'
                 return 'background-color:#f1f5f9;color:#64748b;'
             
             def color_row(row):
                 lv = row[t['level']]
                 if lv == t['critical']: return ['background-color:#fee2e2;'] * len(row)
-                if lv == t['high']: return ['background-color:#fef2f2;'] * len(row)
-                if lv == t['medium']: return ['background-color:#fffbeb;'] * len(row)
-                if lv == t['low']: return ['background-color:#f0fdf4;'] * len(row)
+                if lv == t['high']: return ['background-color:#fffbeb;'] * len(row)
                 return [''] * len(row)
             
             styled = display_df.style.apply(color_row, axis=1).map(color_level, subset=[t['level']])
@@ -306,12 +280,9 @@ if df is not None:
                 fill_h = PatternFill(start_color='667EEA', end_color='667EEA', fill_type='solid')
                 fill_c = PatternFill(start_color='DC2626', end_color='DC2626', fill_type='solid')
                 fill_cr = PatternFill(start_color='FEE2E2', end_color='FEE2E2', fill_type='solid')
-                fill_hi = PatternFill(start_color='EF4444', end_color='EF4444', fill_type='solid')
-                fill_hr = PatternFill(start_color='FEF2F2', end_color='FEF2F2', fill_type='solid')
                 fill_m = PatternFill(start_color='F59E0B', end_color='F59E0B', fill_type='solid')
                 fill_mr = PatternFill(start_color='FFFBEB', end_color='FFFBEB', fill_type='solid')
                 fill_l = PatternFill(start_color='22C55E', end_color='22C55E', fill_type='solid')
-                fill_lr = PatternFill(start_color='F0FDF4', end_color='F0FDF4', fill_type='solid')
                 font_w = Font(color='FFFFFF', bold=True)
                 bdr = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
                 for cell in ws[1]: cell.fill, cell.font, cell.border = fill_h, font_w, bdr
@@ -320,9 +291,8 @@ if df is not None:
                     lv = ws.cell(row=r, column=lv_idx).value
                     rf, lf = None, None
                     if lv == t['critical']: rf, lf = fill_cr, fill_c
-                    elif lv == t['high']: rf, lf = fill_hr, fill_hi
-                    elif lv == t['medium']: rf, lf = fill_mr, fill_m
-                    elif lv == t['low']: rf, lf = fill_lr, fill_l
+                    elif lv == t['high']: rf, lf = fill_mr, fill_m
+                    elif lv == t['low']: rf, lf = None, fill_l
                     for c in range(1, len(display_df.columns) + 1):
                         cell = ws.cell(row=r, column=c)
                         cell.border = bdr
