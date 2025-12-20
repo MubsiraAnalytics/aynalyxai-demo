@@ -433,6 +433,9 @@ if df is not None:
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     text_cols = df.select_dtypes(include=['object']).columns.tolist()
     
+    # Store original columns
+    original_columns = df.columns.tolist()
+    
     st.markdown("---")
     
     # Aggregation Options
@@ -478,24 +481,22 @@ if df is not None:
                 # Aggregate the data
                 if agg_func == 'count':
                     analysis_df = df.groupby(group_by).size().reset_index(name='Count')
-                    numeric_cols = ['Count']
+                    current_numeric_cols = ['Count']
                 else:
                     analysis_df = df.groupby(group_by)[numeric_cols].agg(agg_func).reset_index()
+                    current_numeric_cols = numeric_cols.copy()
                 
                 # Round aggregated values to 2 decimals
-                for col in numeric_cols:
+                for col in current_numeric_cols:
                     if col in analysis_df.columns:
                         analysis_df[col] = analysis_df[col].round(2)
                 
-                original_columns = analysis_df.columns.tolist()
+                current_original_columns = analysis_df.columns.tolist()
                 st.info(f"📊 {'Données agrégées par' if is_fr else 'Data aggregated by'} **{group_by}** ({agg_method}) — **{len(analysis_df)}** {'groupes' if is_fr else 'groups'}")
             else:
                 analysis_df = df.copy()
-                # Round numeric columns to 2 decimals
-                for col in numeric_cols:
-                    if col in analysis_df.columns:
-                        analysis_df[col] = analysis_df[col].round(2)
-                original_columns = df.columns.tolist()
+                current_numeric_cols = numeric_cols.copy()
+                current_original_columns = original_columns.copy()
             
             # Perform anomaly detection
             results = analysis_df.copy()
@@ -511,7 +512,7 @@ if df is not None:
                 total_score = 0
                 score_count = 0
                 
-                for col in numeric_cols:
+                for col in current_numeric_cols:
                     if col not in analysis_df.columns:
                         continue
                     mean = analysis_df[col].mean()
@@ -528,28 +529,35 @@ if df is not None:
                                 row_explanations.append(explanation)
                 
                 # Deviation Score = max Z-score (statistical deviation) - round to 2 decimals
-                results.loc[idx, 'Deviation_Score'] = round(max_z_score, 2)
+                results.at[idx, 'Deviation_Score'] = round(max_z_score, 2)
                 # AI Score = weighted combination (simulating ML model output) - round to 2 decimals
                 ai_score = min(100, max_z_score * 25) if max_z_score > 1.5 else max_z_score * 10
-                results.loc[idx, 'AI_Score'] = round(ai_score, 2)
-                results.loc[idx, 'Anomaly_Explanation'] = " | ".join(row_explanations) if row_explanations else ""
+                results.at[idx, 'AI_Score'] = round(ai_score, 2)
+                results.at[idx, 'Anomaly_Explanation'] = " | ".join(row_explanations) if row_explanations else ""
             
             # Classify anomaly levels based on Deviation Score - adjusted thresholds
-            results.loc[results['Deviation_Score'] > 3.0, 'Anomaly_Level'] = t['critical']
-            results.loc[(results['Deviation_Score'] > 2.3) & (results['Deviation_Score'] <= 3.0), 'Anomaly_Level'] = t['high']
-            results.loc[(results['Deviation_Score'] > 1.8) & (results['Deviation_Score'] <= 2.3), 'Anomaly_Level'] = t['medium']
-            results.loc[(results['Deviation_Score'] > 1.5) & (results['Deviation_Score'] <= 1.8), 'Anomaly_Level'] = t['low']
+            for idx in range(len(results)):
+                dev_score = results.at[idx, 'Deviation_Score']
+                if dev_score > 3.0:
+                    results.at[idx, 'Anomaly_Level'] = t['critical']
+                elif dev_score > 2.3:
+                    results.at[idx, 'Anomaly_Level'] = t['high']
+                elif dev_score > 1.8:
+                    results.at[idx, 'Anomaly_Level'] = t['medium']
+                elif dev_score > 1.5:
+                    results.at[idx, 'Anomaly_Level'] = t['low']
+                else:
+                    results.at[idx, 'Anomaly_Level'] = t['normal']
             
             # Sort results by Deviation Score (anomalies first, then normal)
-            results_sorted = results.sort_values('Deviation_Score', ascending=False)
+            results_sorted = results.sort_values('Deviation_Score', ascending=False).reset_index(drop=True)
             
             # Count anomalies by level
-            anomalies = results_sorted[results_sorted['Anomaly_Level'] != t['normal']]
-            n_critical = len(anomalies[anomalies['Anomaly_Level'] == t['critical']])
-            n_high = len(anomalies[anomalies['Anomaly_Level'] == t['high']])
-            n_medium = len(anomalies[anomalies['Anomaly_Level'] == t['medium']])
-            n_low = len(anomalies[anomalies['Anomaly_Level'] == t['low']])
-            n_total = len(anomalies)
+            n_critical = len(results_sorted[results_sorted['Anomaly_Level'] == t['critical']])
+            n_high = len(results_sorted[results_sorted['Anomaly_Level'] == t['high']])
+            n_medium = len(results_sorted[results_sorted['Anomaly_Level'] == t['medium']])
+            n_low = len(results_sorted[results_sorted['Anomaly_Level'] == t['low']])
+            n_total = n_critical + n_high + n_medium + n_low
             n_normal = len(results_sorted) - n_total
             
             # Statistics cards
@@ -596,16 +604,12 @@ if df is not None:
             st.info(f"📊 {'Affichage de toutes les' if is_fr else 'Showing all'} **{len(results_sorted)}** {'lignes' if is_fr else 'rows'} — **{n_total}** {'anomalies détectées' if is_fr else 'anomalies detected'}, **{n_normal}** {'normales' if is_fr else 'normal'}")
             
             # Create display dataframe with ALL rows and ALL columns
-            display_df = results_sorted.reset_index(drop=True).copy()
+            display_df = results_sorted.copy()
             
             # Reorder columns: original columns first, then result columns
             result_columns = ['Anomaly_Level', 'Deviation_Score', 'AI_Score', 'Anomaly_Explanation']
-            ordered_columns = [c for c in original_columns if c in display_df.columns] + result_columns
+            ordered_columns = [c for c in current_original_columns if c in display_df.columns] + result_columns
             display_df = display_df[ordered_columns]
-            
-            # Round all numeric columns to 2 decimals for display
-            for col in display_df.select_dtypes(include=[np.number]).columns:
-                display_df[col] = display_df[col].round(2)
             
             # Rename only the result columns for display
             col_rename = {
