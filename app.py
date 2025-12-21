@@ -262,7 +262,7 @@ if df is not None:
     # Data Preview
     st.subheader(f"{t['data_preview']} — {data_name}")
     st.caption(t['example_desc'])
-    st.dataframe(df, use_container_width=True, height=250)
+    st.dataframe(df.head(15), use_container_width=True, hide_index=True)
     st.caption(f"📊 {len(df)} rows × {len(df.columns)} columns")
     
     # Get columns
