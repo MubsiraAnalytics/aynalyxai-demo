@@ -84,17 +84,18 @@ t = {
     "adv3_desc": "Identify suspicious patterns early" if not is_fr else "Identifiez les patterns suspects",
     "example_desc": "Sample data with embedded anomalies. AI will identify unusual patterns." if not is_fr else "Donnees avec anomalies. L IA identifiera les patterns inhabituels.",
     "all_rows_note": "Showing ALL rows sorted by risk. Anomalies highlighted, normal shown for context." if not is_fr else "TOUTES les lignes triees par risque.",
-    "aggregation": "📊 Aggregation (Optional)" if not is_fr else "📊 Agrégation (Optionnel)",
+    "aggregation": "📊 Aggregation (Optional)" if not is_fr else "📊 Agregation (Optionnel)",
     "group_by": "Group by column" if not is_fr else "Grouper par colonne",
     "no_grouping": "No grouping" if not is_fr else "Pas de regroupement",
-    "aggregated_results": "Aggregated Results" if not is_fr else "Résultats Agrégés",
+    "aggregated_results": "Aggregated Results" if not is_fr else "Resultats Agreges",
+    "run_analysis": "🚀 Run Analysis" if not is_fr else "🚀 Lancer l'Analyse",
 }
 
 # Thresholds matching the real app (modeling.py)
-THRESHOLD_HIGH = 2.0      # High Anomaly threshold (z-score)
-THRESHOLD_MEDIUM = 1.2    # Medium Anomaly threshold (z-score)
-THRESHOLD_HIGH_AI = -0.15  # Isolation Forest threshold for High
-THRESHOLD_MEDIUM_AI = -0.05  # Isolation Forest threshold for Medium
+THRESHOLD_HIGH = 2.0
+THRESHOLD_MEDIUM = 1.2
+THRESHOLD_HIGH_AI = -0.15
+THRESHOLD_MEDIUM_AI = -0.05
 
 def gen_invoices():
     np.random.seed(42)
@@ -141,6 +142,9 @@ def gen_inventory():
     df['Total_Value'] = df['Quantity'] * df['Unit_Cost']
     return df
 
+# ============================================================================
+# CALCULATION FUNCTIONS - UNTOUCHED
+# ============================================================================
 def run_anomaly_detection(df, numeric_cols, is_fr):
     """
     Run anomaly detection matching the real app (modeling.py)
@@ -149,24 +153,20 @@ def run_anomaly_detection(df, numeric_cols, is_fr):
     results = df.copy()
     X = df[numeric_cols].astype(float).copy()
     
-    # ========== ISOLATION FOREST (AI Score - NEGATIVE for anomalies) ==========
+    # ISOLATION FOREST (AI Score - NEGATIVE for anomalies)
     iso = IsolationForest(n_estimators=120, contamination=0.05, random_state=42)
     iso.fit(X)
-    # decision_function: more NEGATIVE = more anomalous
     results['Anomaly_Score'] = np.round(iso.decision_function(X), 2)
     
-    # ========== Z-SCORE CALCULATION ==========
+    # Z-SCORE CALCULATION
     scaler = StandardScaler()
     z_vals = scaler.fit_transform(X)
     
-    # Store individual z-scores
     for i, col in enumerate(numeric_cols):
         results[f'Deviation_{col}'] = np.round(z_vals[:, i], 2)
     
-    # Average Deviation (mean of absolute z-scores)
     results['Average_Deviation'] = np.round(np.mean(np.abs(z_vals), axis=1), 2)
     
-    # ========== GENERATE EXPLANATIONS ==========
     def generate_explanation(row):
         explanations = []
         for col in numeric_cols:
@@ -183,22 +183,20 @@ def run_anomaly_detection(df, numeric_cols, is_fr):
     
     results['Anomaly_Explanation'] = results.apply(generate_explanation, axis=1)
     
-    # ========== CLASSIFY ANOMALY LEVELS (Hybrid: Z-score + AI) ==========
     def classify_level(row):
         z_comp = row['Average_Deviation']
         ai_score = row['Anomaly_Score']
         
-        # Both agree OR extreme evidence
         both_high = (z_comp >= THRESHOLD_HIGH and ai_score <= THRESHOLD_HIGH_AI)
         stat_extreme = z_comp >= THRESHOLD_HIGH * 1.5
         ai_extreme = ai_score <= THRESHOLD_HIGH_AI * 1.5 and z_comp >= THRESHOLD_MEDIUM
         
         if both_high or stat_extreme or ai_extreme:
-            return t['critical']  # High Anomaly
+            return t['critical']
         elif z_comp >= THRESHOLD_MEDIUM or ai_score <= THRESHOLD_MEDIUM_AI:
-            return t['high']  # Medium Anomaly
+            return t['high']
         else:
-            return t['low']  # Normal
+            return t['low']
     
     results['Anomaly_Level'] = results.apply(classify_level, axis=1)
     
@@ -208,22 +206,18 @@ def run_aggregation(df, group_col, numeric_cols, is_fr):
     """
     Aggregate data by a column and run anomaly detection on aggregated results
     """
-    # Aggregate: sum for numeric columns
     agg_dict = {col: 'sum' for col in numeric_cols}
     agg_df = df.groupby(group_col).agg(agg_dict).reset_index()
-    
-    # Add count column
     agg_df['Count'] = df.groupby(group_col).size().values
-    
-    # Run anomaly detection on aggregated data
     agg_numeric_cols = numeric_cols + ['Count']
     results = run_anomaly_detection(agg_df, agg_numeric_cols, is_fr)
-    
     return results
+# ============================================================================
 
 st.markdown(f'<div class="main-header"><h1>🔬 {t["title"]}</h1><p>{t["subtitle"]}</p></div>', unsafe_allow_html=True)
 st.markdown(f'<div class="demo-badge">{t["demo_notice"]}</div>', unsafe_allow_html=True)
 
+# Sidebar - Sample Selection
 with st.sidebar:
     st.markdown("---")
     st.markdown(f'<p class="sidebar-title">{t["sample_title"]}</p>', unsafe_allow_html=True)
@@ -234,10 +228,12 @@ with st.sidebar:
     with c2:
         b2 = st.button(t['sample_expenses'], use_container_width=True, type="primary")
         b4 = st.button(t['sample_inventory'], use_container_width=True, type="primary")
-    if b1: st.session_state['sample_type'], st.session_state['auto_run'] = 'invoices', True
-    elif b2: st.session_state['sample_type'], st.session_state['auto_run'] = 'expenses', True
-    elif b3: st.session_state['sample_type'], st.session_state['auto_run'] = 'payroll', True
-    elif b4: st.session_state['sample_type'], st.session_state['auto_run'] = 'inventory', True
+    
+    if b1: st.session_state['sample_type'] = 'invoices'
+    elif b2: st.session_state['sample_type'] = 'expenses'
+    elif b3: st.session_state['sample_type'] = 'payroll'
+    elif b4: st.session_state['sample_type'] = 'inventory'
+    
     st.markdown("---")
     st.markdown(f"**{t['how_works']}**")
     st.markdown(f"1️⃣ {t['step1']}")
@@ -245,6 +241,7 @@ with st.sidebar:
     st.markdown(f"3️⃣ {t['step3']}")
     st.markdown(f"4️⃣ {t['step4']}")
 
+# Load data
 df, data_name = None, ""
 if 'sample_type' in st.session_state:
     s = st.session_state['sample_type']
@@ -254,6 +251,7 @@ if 'sample_type' in st.session_state:
     elif s == 'inventory': df, data_name = gen_inventory(), "Inventory"
 
 if df is not None:
+    # Info boxes
     st.markdown(f'<div class="feature-box"><h3>💡 {t["what_is"]}</h3><p>{t["what_is_desc"]}</p></div>', unsafe_allow_html=True)
     st.markdown(f'''<div class="advantage-grid">
         <div class="advantage-item"><div class="icon">⏱️</div><h4>{t['adv1_title']}</h4><p>{t['adv1_desc']}</p></div>
@@ -261,33 +259,43 @@ if df is not None:
         <div class="advantage-item"><div class="icon">🔍</div><h4>{t['adv3_title']}</h4><p>{t['adv3_desc']}</p></div>
     </div>''', unsafe_allow_html=True)
     
+    # Data Preview
     st.subheader(f"{t['data_preview']} — {data_name}")
     st.caption(t['example_desc'])
-    st.dataframe(df.head(10), use_container_width=True, height=280)
+    st.dataframe(df, use_container_width=True, height=250)
+    st.caption(f"📊 {len(df)} rows × {len(df.columns)} columns")
     
+    # Get columns
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
     
-    # Aggregation option
+    # Aggregation Option
     st.markdown("---")
-    st.markdown(f"### {t['aggregation']}")
-    group_options = [t['no_grouping']] + categorical_cols
-    group_col = st.selectbox(t['group_by'], group_options)
+    col_agg, col_btn = st.columns([3, 1])
+    with col_agg:
+        group_options = [t['no_grouping']] + categorical_cols
+        group_col = st.selectbox(f"📊 {t['group_by']}", group_options)
+    with col_btn:
+        st.markdown("<br>", unsafe_allow_html=True)
+        run_btn = st.button(t['run_analysis'], type="primary", use_container_width=True)
+    
     use_aggregation = group_col != t['no_grouping']
     
-    if numeric_cols and st.session_state.get('auto_run', False):
-        st.session_state['auto_run'] = False
+    # Run Analysis
+    if run_btn and numeric_cols:
         st.markdown("---")
         st.subheader(t['results'])
         
         with st.spinner("🤖 AI Analyzing..."):
+            # Run calculation
             if use_aggregation:
-                st.info(f"📊 {t['aggregated_results']}: {group_col}")
+                st.info(f"📊 {t['aggregated_results']}: **{group_col}**")
                 results_sorted = run_aggregation(df, group_col, numeric_cols, is_fr)
-                results_sorted = results_sorted.sort_values('Anomaly_Score', ascending=True).reset_index(drop=True)
             else:
-                results = run_anomaly_detection(df, numeric_cols, is_fr)
-                results_sorted = results.sort_values('Anomaly_Score', ascending=True).reset_index(drop=True)
+                results_sorted = run_anomaly_detection(df, numeric_cols, is_fr)
+            
+            # Sort by Anomaly_Score (most negative first = most anomalous)
+            results_sorted = results_sorted.sort_values('Anomaly_Score', ascending=True).reset_index(drop=True)
             
             # Count anomalies
             n_high = len(results_sorted[results_sorted['Anomaly_Level'] == t['critical']])
@@ -295,6 +303,7 @@ if df is not None:
             n_normal = len(results_sorted[results_sorted['Anomaly_Level'] == t['low']])
             n_total = n_high + n_med
             
+            # Stats Cards
             c1, c2, c3, c4 = st.columns(4)
             c1.markdown(f'<div class="stat-card stat-critical"><div style="font-size:2rem;font-weight:bold;color:#dc2626;">{n_high}</div><div>🔴 High Anomaly</div></div>', unsafe_allow_html=True)
             c2.markdown(f'<div class="stat-card stat-medium"><div style="font-size:2rem;font-weight:bold;color:#f59e0b;">{n_med}</div><div>🟡 Medium Anomaly</div></div>', unsafe_allow_html=True)
@@ -305,16 +314,21 @@ if df is not None:
             st.success(f"✅ **{len(results_sorted)}** rows analyzed — **{n_total}** anomalies detected — **{n_normal}** normal")
             st.info(f"ℹ️ {t['all_rows_note']}")
             
-            # Prepare display dataframe
+            # Prepare display dataframe - keep original columns + analysis columns
+            # Remove individual Deviation_ columns for cleaner view
             display_cols = [c for c in results_sorted.columns if not c.startswith('Deviation_')]
             display_df = results_sorted[display_cols].copy()
-            display_df = display_df.rename(columns={
+            
+            # Rename analysis columns
+            rename_map = {
                 'Anomaly_Level': t['level'], 
                 'Average_Deviation': t['avg_dev'],
                 'Anomaly_Score': t['anomaly_score'],
                 'Anomaly_Explanation': t['explanation']
-            })
+            }
+            display_df = display_df.rename(columns=rename_map)
             
+            # Styling functions
             def color_level(val):
                 if val == t['critical']: return 'background-color:#dc2626;color:white;font-weight:bold;'
                 if val == t['high']: return 'background-color:#f59e0b;color:white;font-weight:bold;'
@@ -327,10 +341,11 @@ if df is not None:
                 if lv == t['high']: return ['background-color:#fffbeb;'] * len(row)
                 return [''] * len(row)
             
+            # Display styled dataframe
             styled = display_df.style.apply(color_row, axis=1).map(color_level, subset=[t['level']])
-            st.dataframe(styled, use_container_width=True, height=600)
+            st.dataframe(styled, use_container_width=True, height=500)
             
-            # Excel export
+            # Excel Export
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 display_df.to_excel(writer, index=False, sheet_name='Results')
@@ -361,10 +376,15 @@ if df is not None:
                 ws.auto_filter.ref = f"A1:{ws.cell(1, len(display_df.columns)).column_letter}{len(display_df) + 1}"
                 ws.freeze_panes = 'A2'
             output.seek(0)
-            st.download_button(t['download_excel'], output, f"aynalyxai_{data_name.lower()}_report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
+            
+            st.download_button(t['download_excel'], output, f"aynalyxai_{data_name.lower()}_report.xlsx", 
+                             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
         
+        # CTA Box
         st.markdown(f'<div class="cta-box"><h3>🚀 {t["get_full"]}</h3><p style="color:#555;">{t["full_features"]}</p><a href="https://mubsira.gumroad.com/l/aynalyxai" target="_blank" class="cta-button">💎 Get AynalyxAI Pro</a></div>', unsafe_allow_html=True)
+
 else:
+    # Welcome screen
     st.markdown(f'<div class="feature-box"><h3>💡 {t["what_is"]}</h3><p>{t["what_is_desc"]}</p></div>', unsafe_allow_html=True)
     st.markdown(f'''<div class="advantage-grid">
         <div class="advantage-item"><div class="icon">⏱️</div><h4>{t['adv1_title']}</h4><p>{t['adv1_desc']}</p></div>
