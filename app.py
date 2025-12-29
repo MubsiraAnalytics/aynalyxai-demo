@@ -11,10 +11,23 @@ from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
+# ============================================================================
+# UTILITY: Number formatting with locale-friendly separators (2 decimal places)
+# ============================================================================
+def format_number(val, decimals=2):
+    """Format a number with 2 decimal places and thousands separators."""
+    if pd.isna(val):
+        return ""
+    try:
+        num = float(val)
+        return f"{num:,.{decimals}f}"
+    except (ValueError, TypeError):
+        return str(val)
+
 # Page config - CENTERED layout for mobile-friendly single page
 st.set_page_config(
     page_title="AynalyxAI Demo",
-    page_icon="🔬",
+    page_icon="📊",
     layout="centered",
     initial_sidebar_state="collapsed"
 )
@@ -519,16 +532,16 @@ is_fr = lang == "Français"
 # Translations
 t = {
     "title": "AynalyxAI Demo" if not is_fr else "Démo AynalyxAI",
-    "subtitle": "AI-Powered Anomaly Detection" if not is_fr else "Détection d'Anomalies par IA",
+    "subtitle": "Quickly Spot Unusual Numbers in Your Data" if not is_fr else "Repérez rapidement les chiffres inhabituels dans vos données",
     "demo_notice": "🎯 FREE DEMO — Try with our sample data below!" if not is_fr else "🎯 DÉMO GRATUITE — Essayez avec nos données d'exemple ci-dessous!",
     "sample_title": "📊 Select Sample Data" if not is_fr else "📊 Sélectionner des Données",
     "sample_invoices": "📄 Invoices" if not is_fr else "📄 Factures",
     "sample_expenses": "💰 Expenses" if not is_fr else "💰 Dépenses",
     "sample_payroll": "👥 Payroll" if not is_fr else "👥 Paie",
     "sample_inventory": "📦 Inventory" if not is_fr else "📦 Inventaire",
-    "run_analysis": "🔍 Run Anomaly Detection" if not is_fr else "🔍 Lancer la Détection",
-    "results": "🎯 Detection Results" if not is_fr else "🎯 Résultats de Détection",
-    "anomalies_found": "anomalies detected" if not is_fr else "anomalies détectées",
+    "run_analysis": "🔍 Check for Unusual Items" if not is_fr else "🔍 Vérifier les Éléments Inhabituels",
+    "results": "🎯 Results" if not is_fr else "🎯 Résultats",
+    "anomalies_found": "unusual items found" if not is_fr else "éléments inhabituels trouvés",
     "download_excel": "📥 Download Results (Excel)" if not is_fr else "📥 Télécharger (Excel)",
     "data_preview": "📋 Data Preview" if not is_fr else "📋 Aperçu des Données",
     "critical": "CRITICAL" if not is_fr else "CRITIQUE",
@@ -536,25 +549,25 @@ t = {
     "medium": "MEDIUM" if not is_fr else "MOYEN", 
     "low": "LOW" if not is_fr else "FAIBLE",
     "normal": "Normal" if not is_fr else "Normal",
-    "explanation": "Explanation" if not is_fr else "Explication",
-    "level": "Level" if not is_fr else "Niveau",
-    "ai_score": "AI Score" if not is_fr else "Score IA",
-    "deviation_score": "Deviation Score" if not is_fr else "Score Déviation",
-    "welcome_title": "� Select Sample Data to Begin" if not is_fr else "� Sélectionnez des Données pour Commencer",
-    "welcome_text": "Choose one of the 4 sample datasets below to see AI anomaly detection in action." if not is_fr else "Choisissez l'un des 4 jeux de données ci-dessous pour voir la détection d'anomalies en action.",
+    "explanation": "What Stands Out" if not is_fr else "Ce qui ressort",
+    "level": "Priority" if not is_fr else "Priorité",
+    "ai_score": "Outlier Score" if not is_fr else "Score Atypique",
+    "deviation_score": "How Far from Normal" if not is_fr else "Écart vs Normal",
+    "welcome_title": "👆 Select Sample Data to Begin" if not is_fr else "👆 Sélectionnez des Données pour Commencer",
+    "welcome_text": "Choose one of the 4 sample datasets below to see the analysis in action." if not is_fr else "Choisissez l'un des 4 jeux de données ci-dessous pour voir l'analyse en action.",
     "get_full": "Get Full Desktop Version" if not is_fr else "Obtenir la Version Complète",
     "full_features": """✅ Upload your own CSV/Excel files
-✅ AI-powered anomaly detection (Isolation Forest + Z-score)
+✅ Automatic unusual item detection
 ✅ Data cleaning & validation wizard
-✅ Smart grouping & aggregation
+✅ Smart grouping & summaries
 ✅ Custom ratio calculations
 ✅ Multi-language (English/French)
 ✅ Professional Excel exports with formatting
 ✅ 100% offline — your data stays private
 ✅ No subscription — one-time purchase""" if not is_fr else """✅ Importez vos propres fichiers CSV/Excel
-✅ Détection d'anomalies par IA (Isolation Forest + Z-score)
+✅ Détection automatique des éléments inhabituels
 ✅ Assistant de nettoyage des données
-✅ Agrégation et regroupement intelligent
+✅ Regroupement et sommaires intelligents
 ✅ Calculs de ratios personnalisés
 ✅ Bilingue (Français/Anglais)
 ✅ Exports Excel professionnels formatés
@@ -565,15 +578,14 @@ t = {
     # Aggregation/Grouping translations
     "group_by": "📊 Group by (Optional)" if not is_fr else "📊 Grouper par (Optionnel)",
     "no_grouping": "No grouping (analyze all rows)" if not is_fr else "Pas de regroupement (analyser toutes les lignes)",
-    "aggregated_results": "Aggregated Results by" if not is_fr else "Résultats agrégés par",
-    "run_analysis": "🔍 Run Anomaly Detection" if not is_fr else "🔍 Lancer la Détection",
+    "aggregated_results": "Summarized Results by" if not is_fr else "Résultats résumés par",
+    "run_analysis": "🔍 Check for Unusual Items" if not is_fr else "🔍 Vérifier les Éléments Inhabituels",
 }
 
 # ============================================================================
-# PROFESSIONAL ANOMALY DETECTION - Matching main app (modeling.py)
+# PROFESSIONAL DATA ANALYSIS - Matching main app (modeling.py)
 # ============================================================================
-# Uses Isolation Forest (negative scores for anomalies) + Direction-aware Z-scores
-# Hybrid classification: Both AI + Statistical methods combined
+# Uses statistical pattern recognition to find unusual values
 
 def clean_column_name(col_name: str) -> str:
     """Convert technical column names to user-friendly format."""
@@ -591,11 +603,11 @@ def run_professional_anomaly_detection(
     is_fr: bool = False
 ) -> pd.DataFrame:
     """
-    Professional anomaly detection matching main app logic.
+    Professional pattern analysis matching main app logic.
     
     Returns DataFrame with:
-    - Isolation_Score: Negative for anomalies (from Isolation Forest)
-    - Average_Deviation: Direction-aware Z-score composite
+    - Isolation_Score: Confidence score for unusual items (lower = more unusual)
+    - Average_Deviation: How far from normal the item is
     - Anomaly_Level: Critical/High/Medium/Low/Normal
     - Anomaly_Explanation: Human-readable explanation
     """
@@ -608,7 +620,7 @@ def run_professional_anomaly_detection(
     X = df_out[numeric_cols].astype(float).copy()
     
     # ========================================================================
-    # ISOLATION FOREST - AI Pattern Detection
+    # PATTERN DETECTION MODEL
     # ========================================================================
     iso = IsolationForest(
         n_estimators=120,
@@ -620,7 +632,7 @@ def run_professional_anomaly_detection(
     df_out["Isolation_Score"] = np.round(scores, 2)
     
     # ========================================================================
-    # DIRECTION-AWARE Z-SCORE CALCULATION
+    # DEVIATION SCORE CALCULATION
     # ========================================================================
     scaler = StandardScaler()
     z_vals = scaler.fit_transform(X)
@@ -649,7 +661,7 @@ def run_professional_anomaly_detection(
     df_out["Average_Deviation"] = np.round(composite, 2)
     
     # ========================================================================
-    # HYBRID ANOMALY CLASSIFICATION (Matching modeling.py)
+    # CLASSIFICATION (Matching modeling.py)
     # ========================================================================
     def classify_anomaly_level(row):
         z_comp = row["Average_Deviation"]
@@ -746,7 +758,7 @@ def run_professional_anomaly_detection(
         contributors.sort(key=lambda x: x['adj_z'], reverse=True)
         
         if len(contributors) == 0:
-            return "AI pattern detected" if not is_fr else "Motif IA détecté"
+            return "Unusual pattern" if not is_fr else "Motif inhabituel"
         
         # Build explanation
         parts = []
@@ -851,7 +863,7 @@ def generate_sample_inventory():
     return df
 
 # ============================================================================
-# AGGREGATION FUNCTION - Group data and run detection on aggregates
+# GROUPING FUNCTION - Group data and run analysis on summaries
 # ============================================================================
 def run_aggregation_analysis(
     df: pd.DataFrame,
@@ -860,8 +872,8 @@ def run_aggregation_analysis(
     is_fr: bool = False
 ) -> pd.DataFrame:
     """
-    Aggregate data by a categorical column, then run anomaly detection on aggregated results.
-    This helps find anomalies at a higher level (e.g., by Category, Vendor, Department).
+    Group data by a categorical column, then run analysis on summarized results.
+    This helps find unusual patterns at a summary level (e.g., by Category, Vendor, Department).
     """
     # Create aggregation dictionary (sum for numeric columns)
     agg_dict = {col: 'sum' for col in numeric_cols}
@@ -875,7 +887,7 @@ def run_aggregation_analysis(
     # Include Count in numeric columns for anomaly detection
     agg_numeric_cols = numeric_cols + ['Count']
     
-    # Run anomaly detection on aggregated data
+    # Run analysis on grouped data
     results, adjusted_z = run_professional_anomaly_detection(
         df=agg_df,
         numeric_cols=agg_numeric_cols,
@@ -893,7 +905,7 @@ def run_aggregation_analysis(
 # Header
 st.markdown(f"""
 <div class="main-header">
-    <h1>🔬 {t['title']}</h1>
+    <h1>📊 {t['title']}</h1>
     <p>{t['subtitle']}</p>
 </div>
 """, unsafe_allow_html=True)
@@ -903,7 +915,7 @@ st.markdown(f'<div class="demo-badge">{t["demo_notice"]}</div>', unsafe_allow_ht
 
 # What is AynalyxAI info card
 what_is_title = "💡 Qu'est-ce qu'AynalyxAI?" if is_fr else "💡 What is AynalyxAI?"
-what_is_text = "AynalyxAI est un outil d'analyse financière intelligent qui détecte automatiquement les anomalies, erreurs et irrégularités dans vos données comptables grâce à des algorithmes d'IA avancés." if is_fr else "AynalyxAI is an intelligent financial analysis tool that automatically detects anomalies, errors, and irregularities in your accounting data using advanced AI algorithms."
+what_is_text = "AynalyxAI analyse vos données financières (factures, dépenses, paie, inventaire) et identifie automatiquement les montants inhabituels, les erreurs possibles et les éléments à vérifier — en quelques secondes." if is_fr else "AynalyxAI reviews your financial data (invoices, expenses, payroll, inventory) and automatically highlights unusual amounts, possible errors, and items to review — in seconds."
 st.markdown(f"""
 <div class="info-card">
     <h4>{what_is_title}</h4>
@@ -914,9 +926,9 @@ st.markdown(f"""
 # How It Works section with aggregation step
 how_title = "📋 Comment ça Fonctionne" if is_fr else "📋 How It Works"
 step1 = "Importer Excel/CSV" if is_fr else "Upload Excel/CSV"
-step2 = "L'IA analyse les motifs" if is_fr else "AI analyzes patterns"
-step3 = "Agrégation & Regroupement" if is_fr else "Aggregation & Grouping"
-step4 = "Anomalies signalées" if is_fr else "Anomalies flagged"
+step2 = "Analyse des tendances" if is_fr else "Scans for patterns"
+step3 = "Regroupe les données" if is_fr else "Groups the data"
+step4 = "Signale les inhabituels" if is_fr else "Flags unusual items"
 step5 = "Exporter rapports" if is_fr else "Export reports"
 
 st.markdown(f"""
@@ -929,7 +941,7 @@ st.markdown(f"""
         </div>
         <div class="step-box">
             <div class="step-num">2</div>
-            <div class="step-text">🤖 {step2}</div>
+            <div class="step-text">🔍 {step2}</div>
         </div>
         <div class="step-box">
             <div class="step-num">3</div>
@@ -994,9 +1006,15 @@ if 'sample_type' in st.session_state:
 
 # Main content
 if df is not None:
-    # Data preview
+    # Data preview with number formatting
     st.subheader(f"{t['data_preview']} — {data_name}")
-    st.dataframe(df.head(10), use_container_width=True, height=300)
+    
+    # Format numeric columns for display
+    df_display = df.copy()
+    for col in df_display.select_dtypes(include=[np.number]).columns:
+        df_display[col] = df_display[col].apply(lambda x: format_number(x, 2))
+    
+    st.dataframe(df_display.head(10), use_container_width=True, height=300)
     st.caption(f"{'Affichage de 10 sur' if is_fr else 'Showing 10 of'} {len(df)} {'lignes' if is_fr else 'rows'}")
     
     # Get numeric and categorical columns
@@ -1018,7 +1036,7 @@ if df is not None:
         group_col = st.selectbox(
             t['group_by'],
             options=group_options,
-            help="Group data by a category to detect anomalies at an aggregated level (e.g., find which Department or Vendor has unusual totals)" if not is_fr else "Regroupez les données par catégorie pour détecter les anomalies au niveau agrégé (ex: trouver quel Département ou Fournisseur a des totaux inhabituels)"
+            help="Group data by a category to spot unusual totals at a summary level (e.g., find which Department or Vendor has unusually high or low totals)" if not is_fr else "Regroupez les données par catégorie pour repérer les totaux inhabituels (ex: trouver quel Département ou Fournisseur a des totaux trop élevés ou faibles)"
         )
     
     with col_btn:
@@ -1036,13 +1054,14 @@ if df is not None:
         
         # Show aggregation info if grouping is selected
         if use_aggregation:
-            st.info(f"📊 **{t['aggregated_results']} {group_col}** — {'Les données sont agrégées avant la détection' if is_fr else 'Data is aggregated before detection'}")
+            agg_msg = "Les données sont regroupées avant l'analyse" if is_fr else "Data is grouped before analysis"
+            st.info(f"📊 **{t['aggregated_results']} {group_col}** — {agg_msg}")
         
         with st.spinner("🔍 " + ("Analyse en cours..." if is_fr else "Analyzing...")):
             # ================================================================
-            # PROFESSIONAL ANOMALY DETECTION (matching modeling.py)
-            # Uses Isolation Forest (negative scores) + Direction-aware Z-scores
-            # Supports both raw data analysis AND aggregated/grouped analysis
+            # PROFESSIONAL DATA ANALYSIS (matching modeling.py)
+            # Uses statistical methods to identify unusual patterns
+            # Supports both raw data analysis AND grouped analysis
             # ================================================================
             
             if use_aggregation:
@@ -1121,16 +1140,16 @@ if df is not None:
             # Show summary - different message for aggregated vs raw data
             if use_aggregation:
                 row_label = "groupes" if is_fr else "groups"
-                st.info(f"📊 {'Affichage de' if is_fr else 'Showing'} **{len(results_sorted)}** {row_label} ({'agrégé par' if is_fr else 'aggregated by'} {group_col}) — **{n_total}** {'anomalies' if is_fr else 'anomalies'}, **{n_normal}** {'normaux' if is_fr else 'normal'}")
+                st.info(f"📊 {'Affichage de' if is_fr else 'Showing'} **{len(results_sorted)}** {row_label} ({'résumé par' if is_fr else 'grouped by'} {group_col}) — **{n_total}** {'éléments inhabituels' if is_fr else 'unusual items'}, **{n_normal}** {'normaux' if is_fr else 'normal'}")
             else:
-                st.info(f"📊 {'Affichage de toutes les' if is_fr else 'Showing all'} **{len(results_sorted)}** {'lignes' if is_fr else 'rows'} — **{n_total}** {'anomalies détectées' if is_fr else 'anomalies detected'}, **{n_normal}** {'normales' if is_fr else 'normal'}")
+                st.info(f"📊 {'Affichage de toutes les' if is_fr else 'Showing all'} **{len(results_sorted)}** {'lignes' if is_fr else 'rows'} — **{n_total}** {'éléments inhabituels' if is_fr else 'unusual items'}, **{n_normal}** {'normales' if is_fr else 'normal'}")
             
             # Create display dataframe with ALL rows (no filtering!)
             display_df = results_sorted.reset_index(drop=True).copy()
             
             # Remove the per-column Deviation_ columns for cleaner display
             deviation_cols = [c for c in display_df.columns if c.startswith('Deviation_')]
-            display_df = display_df.drop(columns=deviation_cols)
+            display_df = display_df.drop(columns=[c for c in deviation_cols if c in display_df.columns])
             
             # Rename columns for display (matching the new column names)
             col_rename = {
@@ -1141,9 +1160,10 @@ if df is not None:
             }
             display_df = display_df.rename(columns=col_rename)
             
-            # Round the scores for display (2 decimal places)
-            display_df[t['deviation_score']] = display_df[t['deviation_score']].round(2)
-            display_df[t['ai_score']] = display_df[t['ai_score']].round(2)
+            # Format all numeric columns to 2 decimal places with thousands separators
+            for col in display_df.columns:
+                if col not in [t['level'], t['explanation']] and display_df[col].dtype in ['float64', 'int64', 'float32', 'int32']:
+                    display_df[col] = display_df[col].apply(lambda x: format_number(x, 2))
             
             # Apply color styling function
             def color_level(val):
